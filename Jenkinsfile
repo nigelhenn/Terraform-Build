@@ -16,7 +16,7 @@ pipeline {
 
     stage('Checkout') {
     steps {
-        git credentialsId: 'github-token', url: 'https://github.com/nigelhenn/aws-terraform-lab.git', branch: 'main'
+        git credentialsId: 'github-token', url: 'https://github.com/nigelhenn/aws-terraform-lab.git', branch: 'master'
     }
 }
 
