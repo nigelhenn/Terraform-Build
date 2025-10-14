@@ -4,6 +4,8 @@ pipeline {
   environment {
     TF_VERSION = '1.6.0'
     TF_WORKSPACE = 'default'
+    AWS_ACCESS_KEY_ID = credentials('aws-access-key-id')
+    AWS_SECRET_ACCESS_KEY = credentials('aws-secret-access-key')
   }
 
   stages {
