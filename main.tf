@@ -147,73 +147,50 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 ####################
 # Per-environment networks (dev, test, prod)
 ####################
-locals {
-  envs = ["dev", "test", "prod"]
-}
-
-resource "aws_vpc" "env_vpc" {
-  for_each             = toset(local.envs)
-  cidr_block           = cidrsubnet("10.0.0.0/16", 8, index(local.envs, each.key))
+resource "aws_vpc" "shared_vpc" {
+  cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
   enable_dns_hostnames = true
-
-  tags = {
-    Name = "${each.key}-vpc-${random_id.suffix.hex}"
-  }
+  tags = { Name = "shared-vpc" }
 }
 
-resource "aws_subnet" "env_subnet" {
-  for_each                = aws_vpc.env_vpc
-  vpc_id                  = each.value.id
-  cidr_block              = cidrsubnet(each.value.cidr_block, 4, 0) # first /24 in each VPC
-  availability_zone       = data.aws_availability_zones.available.names[0]
+resource "aws_subnet" "public_subnet" {
+  vpc_id                  = aws_vpc.shared_vpc.id
+  cidr_block              = "10.0.1.0/24"
   map_public_ip_on_launch = true
-
-  tags = {
-    Name = "${each.key}-public-subnet-${random_id.suffix.hex}"
-  }
+  availability_zone       = data.aws_availability_zones.available.names[0]
+  tags = { Name = "shared-public-subnet" }
 }
 
-resource "aws_internet_gateway" "env_igw" {
-  for_each = aws_vpc.env_vpc
-  vpc_id   = each.value.id
-
-  tags = {
-    Name = "${each.key}-igw-${random_id.suffix.hex}"
-  }
+resource "aws_internet_gateway" "shared_igw" {
+  vpc_id = aws_vpc.shared_vpc.id
+  tags = { Name = "shared-igw" }
 }
 
-resource "aws_route_table" "env_rt" {
-  for_each = aws_vpc.env_vpc
-  vpc_id   = each.value.id
-
+resource "aws_route_table" "shared_rt" {
+  vpc_id = aws_vpc.shared_vpc.id
   route {
     cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.env_igw[each.key].id
+    gateway_id = aws_internet_gateway.shared_igw.id
   }
-
-  tags = {
-    Name = "${each.key}-rt-${random_id.suffix.hex}"
-  }
+  tags = { Name = "shared-rt" }
 }
 
-resource "aws_route_table_association" "env_rta" {
-  for_each       = aws_subnet.env_subnet
-  subnet_id      = each.value.id
-  route_table_id = aws_route_table.env_rt[each.key].id
+resource "aws_route_table_association" "shared_rta" {
+  subnet_id      = aws_subnet.public_subnet.id
+  route_table_id = aws_route_table.shared_rt.id
 }
+
 
 ####################
 # Environment security groups
 ####################
-resource "aws_security_group" "env_sg" {
-  for_each    = aws_vpc.env_vpc
-  name        = "${each.key}-sg-${random_id.suffix.hex}"
-  description = "Security group for ${each.key} environment"
-  vpc_id      = each.value.id
+resource "aws_security_group" "shared_sg" {
+  name        = "shared-sg"
+  description = "Allow HTTP and SSH"
+  vpc_id      = aws_vpc.shared_vpc.id
 
   ingress {
-    description = "HTTP"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -221,7 +198,6 @@ resource "aws_security_group" "env_sg" {
   }
 
   ingress {
-    description = "SSH from allowed CIDR"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -235,9 +211,7 @@ resource "aws_security_group" "env_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
-    Name = "${each.key}-sg"
-  }
+  tags = { Name = "shared-sg" }
 }
 
 ####################
@@ -256,13 +230,12 @@ resource "aws_instance" "free_ec2" {
   ami                    = data.aws_ami.amazon_linux.id
   instance_type          = "t3.micro"
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
-  subnet_id              = local.selected_subnet_id
-  vpc_security_group_ids = [local.selected_sg_id]
+  subnet_id              = aws_subnet.public_subnet.id
+  vpc_security_group_ids = [aws_security_group.shared_sg.id]
   associate_public_ip_address = true
 
   user_data = <<EOF
 #!/bin/bash
-set -e
 yum update -y
 amazon-linux-extras install -y nginx1
 systemctl enable nginx
@@ -295,9 +268,11 @@ aws s3 cp /tmp/heartbeat.txt s3://\$BUCKET/heartbeat-\$INSTANCE_ID.txt --region 
 EOF
 
   tags = {
-    Name = "TerraformFreeTierLab-${var.env}-${random_id.suffix.hex}"
+    Name        = "TerraformFreeTierLab-${var.env}"
+    Environment = var.env
   }
 }
+
 
 
 ####################
