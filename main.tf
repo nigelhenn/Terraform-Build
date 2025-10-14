@@ -16,179 +16,108 @@ provider "aws" {
   region = var.aws_region
 }
 
+variable "aws_region" {
+  description = "AWS region to deploy into"
+  type        = string
+  default     = "eu-west-1"
+}
 
-####################
-# Helpers / random suffix
-####################
+variable "allowed_ssh_cidr" {
+  description = "CIDR allowed to SSH into instances"
+  type        = string
+  default     = "203.0.113.0/32"
+}
+
 resource "random_id" "suffix" {
   byte_length = 4
 }
 
-####################
-# AMI and AZs
-####################
 data "aws_availability_zones" "available" {
   state = "available"
 }
 
 data "aws_ami" "amazon_linux" {
   most_recent = true
-
   filter {
     name   = "name"
     values = ["amzn2-ami-hvm-*-x86_64-gp2"]
   }
-
   filter {
     name   = "virtualization-type"
     values = ["hvm"]
   }
-
   owners = ["amazon"]
 }
 
-####################
-# Core shared resources (S3, DynamoDB, IAM)
-####################
-resource "aws_s3_bucket" "lab_bucket" {
-  bucket = "terraform-lab-bucket-${random_id.suffix.hex}"
-  acl    = "private"
-
-  tags = {
-    Name = "terraform-lab-bucket-${random_id.suffix.hex}"
+locals {
+  envs = {
+    dev  = "dev"
+    test = "test"
+    prod = "prod"
   }
 
-  lifecycle_rule {
-    id      = "auto-cleanup"
-    enabled = true
-    expiration {
-      days = 30
-    }
-  }
-}
-
-resource "aws_s3_bucket_object" "index" {
-  bucket       = aws_s3_bucket.lab_bucket.id
-  key          = "index.html"
-  content_type = "text/html"
-  content      = <<HTML
-<html>
-  <head><title>Terraform Lab</title></head>
-  <body>
-    <h1>Terraform Lab</h1>
-    <p>This site is backed by S3 and an EC2 instance heartbeat.</p>
-    <p>Bucket: ${aws_s3_bucket.lab_bucket.bucket}</p>
-  </body>
-</html>
-HTML
-}
-
-resource "aws_dynamodb_table" "lab_table" {
-  name         = "terraform-lab-table-${random_id.suffix.hex}"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "id"
-
-  attribute {
-    name = "id"
-    type = "S"
+  public_subnet_cidrs = {
+    dev  = "10.0.1.0/24"
+    test = "10.0.3.0/24"
+    prod = "10.0.5.0/24"
   }
 
-  tags = {
-    Name = "terraform-lab-table"
+  private_subnet_cidrs = {
+    dev  = "10.0.2.0/24"
+    test = "10.0.4.0/24"
+    prod = "10.0.6.0/24"
   }
 }
 
-data "aws_iam_policy_document" "ec2_assume_role" {
-  statement {
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["ec2.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_iam_role" "ec2_s3_role" {
-  name               = "terraform-lab-ec2-s3-role-${random_id.suffix.hex}"
-  assume_role_policy = data.aws_iam_policy_document.ec2_assume_role.json
-}
-
-data "aws_iam_policy_document" "s3_put" {
-  statement {
-    actions = [
-      "s3:PutObject",
-      "s3:GetObject",
-      "s3:PutObjectAcl",
-      "s3:ListBucket"
-    ]
-    resources = [
-      aws_s3_bucket.lab_bucket.arn,
-      "${aws_s3_bucket.lab_bucket.arn}/*"
-    ]
-  }
-}
-
-resource "aws_iam_policy" "s3_put_policy" {
-  name        = "terraform-lab-s3-put-${random_id.suffix.hex}"
-  description = "Allow put/get to the lab bucket"
-  policy      = data.aws_iam_policy_document.s3_put.json
-}
-
-resource "aws_iam_role_policy_attachment" "attach_put" {
-  role       = aws_iam_role.ec2_s3_role.name
-  policy_arn = aws_iam_policy.s3_put_policy.arn
-}
-
-resource "aws_iam_instance_profile" "ec2_profile" {
-  name = "terraform-lab-profile-${random_id.suffix.hex}"
-  role = aws_iam_role.ec2_s3_role.name
-}
-
-####################
-# Per-environment networks (dev, test, prod)
-####################
-resource "aws_vpc" "shared_vpc" {
+resource "aws_vpc" "lab_vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
   enable_dns_hostnames = true
-  tags = { Name = "shared-vpc" }
+  tags                 = { Name = "lab-vpc" }
 }
 
-resource "aws_subnet" "public_subnet" {
-  vpc_id                  = aws_vpc.shared_vpc.id
-  cidr_block              = "10.0.1.0/24"
-  map_public_ip_on_launch = true
-  availability_zone       = data.aws_availability_zones.available.names[0]
-  tags = { Name = "shared-public-subnet" }
+resource "aws_internet_gateway" "lab_igw" {
+  vpc_id = aws_vpc.lab_vpc.id
+  tags   = { Name = "lab-igw" }
 }
 
-resource "aws_internet_gateway" "shared_igw" {
-  vpc_id = aws_vpc.shared_vpc.id
-  tags = { Name = "shared-igw" }
-}
-
-resource "aws_route_table" "shared_rt" {
-  vpc_id = aws_vpc.shared_vpc.id
+resource "aws_route_table" "public_rt" {
+  vpc_id = aws_vpc.lab_vpc.id
   route {
     cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.shared_igw.id
+    gateway_id = aws_internet_gateway.lab_igw.id
   }
-  tags = { Name = "shared-rt" }
+  tags = { Name = "public-rt" }
 }
 
-resource "aws_route_table_association" "shared_rta" {
-  subnet_id      = aws_subnet.public_subnet.id
-  route_table_id = aws_route_table.shared_rt.id
+resource "aws_subnet" "public" {
+  for_each                = local.envs
+  vpc_id                  = aws_vpc.lab_vpc.id
+  cidr_block              = local.public_subnet_cidrs[each.key]
+  map_public_ip_on_launch = true
+  availability_zone       = data.aws_availability_zones.available.names[0]
+  tags                    = { Name = "${each.key}-public-subnet" }
 }
 
+resource "aws_subnet" "private" {
+  for_each          = local.envs
+  vpc_id            = aws_vpc.lab_vpc.id
+  cidr_block        = local.private_subnet_cidrs[each.key]
+  availability_zone = data.aws_availability_zones.available.names[0]
+  tags              = { Name = "${each.key}-private-subnet" }
+}
 
-####################
-# Environment security groups
-####################
-resource "aws_security_group" "shared_sg" {
-  name        = "shared-sg"
-  description = "Allow HTTP and SSH"
-  vpc_id      = aws_vpc.shared_vpc.id
+resource "aws_route_table_association" "public_assoc" {
+  for_each       = aws_subnet.public
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.public_rt.id
+}
+
+resource "aws_security_group" "env_sg" {
+  for_each    = local.envs
+  name        = "${each.key}-sg"
+  description = "Allow HTTP and SSH for ${each.key}"
+  vpc_id      = aws_vpc.lab_vpc.id
 
   ingress {
     from_port   = 80
@@ -211,24 +140,89 @@ resource "aws_security_group" "shared_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = { Name = "shared-sg" }
+  tags = { Name = "${each.key}-sg" }
 }
 
-####################
-# Selected environment lookups
-####################
+resource "aws_s3_bucket" "lab_bucket" {
+  bucket = "terraform-lab-bucket-${random_id.suffix.hex}"
+  tags   = { Name = "terraform-lab-bucket-${random_id.suffix.hex}" }
+}
 
+resource "aws_s3_object" "index" {
+  bucket       = aws_s3_bucket.lab_bucket.id
+  key          = "index.html"
+  content_type = "text/html"
+  content      = <<HTML
+<html>
+  <head><title>Terraform Lab</title></head>
+  <body>
+    <h1>Terraform Lab</h1>
+    <p>This site is backed by S3 and an EC2 instance heartbeat.</p>
+    <p>Bucket: ${aws_s3_bucket.lab_bucket.bucket}</p>
+  </body>
+</html>
+HTML
+}
 
-####################
-# EC2 instance (in selected env)
-####################
-resource "aws_instance" "free_ec2" {
-  ami                    = data.aws_ami.amazon_linux.id
-  instance_type          = "t3.micro"
-  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
-  subnet_id              = aws_subnet.public_subnet.id
-  vpc_security_group_ids = [aws_security_group.shared_sg.id]
+resource "aws_dynamodb_table" "lab_table" {
+  name         = "terraform-lab-table-${random_id.suffix.hex}"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "id"
+  attribute {
+    name = "id"
+    type = "S"
+  }
+  tags = { Name = "terraform-lab-table" }
+}
+
+data "aws_iam_policy_document" "ec2_assume_role" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ec2_s3_role" {
+  name               = "terraform-lab-ec2-s3-role-${random_id.suffix.hex}"
+  assume_role_policy = data.aws_iam_policy_document.ec2_assume_role.json
+}
+
+data "aws_iam_policy_document" "s3_put" {
+  statement {
+    actions = ["s3:PutObject", "s3:GetObject", "s3:PutObjectAcl", "s3:ListBucket"]
+    resources = [
+      aws_s3_bucket.lab_bucket.arn,
+      "${aws_s3_bucket.lab_bucket.arn}/*"
+    ]
+  }
+}
+
+resource "aws_iam_policy" "s3_put_policy" {
+  name   = "terraform-lab-s3-put-${random_id.suffix.hex}"
+  policy = data.aws_iam_policy_document.s3_put.json
+}
+
+resource "aws_iam_role_policy_attachment" "attach_put" {
+  role       = aws_iam_role.ec2_s3_role.name
+  policy_arn = aws_iam_policy.s3_put_policy.arn
+}
+
+resource "aws_iam_instance_profile" "ec2_profile" {
+  name = "terraform-lab-profile-${random_id.suffix.hex}"
+  role = aws_iam_role.ec2_s3_role.name
+}
+
+resource "aws_instance" "lab_instance" {
+  for_each                    = local.envs
+  ami                         = data.aws_ami.amazon_linux.id
+  instance_type               = "t3.micro"
+  subnet_id                   = aws_subnet.public[each.key].id
+  vpc_security_group_ids      = [aws_security_group.env_sg[each.key].id]
   associate_public_ip_address = true
+  iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
 
   user_data = <<EOF
 #!/bin/bash
@@ -242,7 +236,7 @@ PRIVATE_IP=\$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4 || echo
 REGION=${var.aws_region}
 BUCKET=${aws_s3_bucket.lab_bucket.bucket}
 TABLE=${aws_dynamodb_table.lab_table.name}
-ENV=${var.env}
+ENV=${each.key}
 
 cat > /usr/share/nginx/html/index.html <<'HTML'
 <html>
@@ -263,40 +257,9 @@ echo "heartbeat from \$INSTANCE_ID at \$(date -u)" > /tmp/heartbeat.txt
 aws s3 cp /tmp/heartbeat.txt s3://\$BUCKET/heartbeat-\$INSTANCE_ID.txt --region \$REGION || true
 EOF
 
+
   tags = {
-    Name        = "TerraformFreeTierLab-${var.env}"
-    Environment = var.env
+    Name        = "TerraformFreeTierLab-${each.key}"
+    Environment = each.key
   }
 }
-
-
-
-####################
-# Outputs
-####################
-output "active_environment" {
-  description = "Selected environment"
-  value       = var.env
-}
-
-output "instance_public_ip" {
-  description = "Public IP of the EC2 instance (selected environment)"
-  value       = aws_instance.free_ec2.public_ip
-}
-
-output "s3_bucket" {
-  description = "S3 bucket name"
-  value       = aws_s3_bucket.lab_bucket.bucket
-}
-
-output "s3_index_url" {
-  description = "S3 object URL for index (not static website)"
-  value       = "https://${aws_s3_bucket.lab_bucket.bucket}.s3.${var.aws_region}.amazonaws.com/index.html"
-}
-
-output "dynamodb_table" {
-  description = "DynamoDB table name"
-  value       = aws_dynamodb_table.lab_table.name
-}
-
-
