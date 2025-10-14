@@ -2,21 +2,26 @@ pipeline {
   agent any
 
   environment {
-    AWS_REGION = "us-east-1"
+    TF_VERSION = '1.6.0'
+    TF_WORKSPACE = 'default'
   }
 
   stages {
     stage('Checkout') {
       steps {
-        git credentialsId: 'github-token', 
-            url: 'https://github.com/nigelhenn/aws-terraform-lab.git', 
-            branch: 'main'
+        git url: 'https://github.com/your-org/your-terraform-repo.git', branch: 'main'
       }
     }
 
     stage('Terraform Init') {
       steps {
         sh 'terraform init'
+      }
+    }
+
+    stage('Terraform Validate') {
+      steps {
+        sh 'terraform validate'
       }
     }
 
@@ -27,13 +32,10 @@ pipeline {
     }
 
     stage('Terraform Apply') {
-      when {
-        branch 'main'
-      }
       steps {
-        sh 'terraform apply -auto-approve tfplan'
+        input message: 'Approve Terraform Apply?'
+        sh 'terraform apply tfplan'
       }
     }
   }
 }
-
