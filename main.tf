@@ -217,11 +217,7 @@ resource "aws_security_group" "shared_sg" {
 ####################
 # Selected environment lookups
 ####################
-locals {
-  selected_vpc_id    = aws_vpc.env_vpc[var.env].id
-  selected_subnet_id = aws_subnet.env_subnet[var.env].id
-  selected_sg_id     = aws_security_group.env_sg[var.env].id
-}
+
 
 ####################
 # EC2 instance (in selected env)
@@ -303,17 +299,4 @@ output "dynamodb_table" {
   value       = aws_dynamodb_table.lab_table.name
 }
 
-output "vpc_ids" {
-  description = "Map of VPC ids per environment"
-  value       = { for k, v in aws_vpc.env_vpc : k => v.id }
-}
 
-output "subnet_ids" {
-  description = "Map of subnet ids per environment"
-  value       = { for k, v in aws_subnet.env_subnet : k => v.id }
-}
-
-output "security_group_ids" {
-  description = "Map of SG ids per environment"
-  value       = { for k, v in aws_security_group.env_sg : k => v.id }
-}
