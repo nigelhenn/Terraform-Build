@@ -9,20 +9,17 @@ pipeline {
     AWS_REGION = "us-east-1"
 
   }
-
+}
 
 
   stages {
 
     stage('Checkout') {
-
-      steps {
-
-        git branch: 'main', url: 'https://github.com/nigelhenn/aws-terraform-lab.git'
-
-      }
-
+    steps {
+        git credentialsId: 'github-token', url: 'https://github.com/nigelhenn/aws-terraform-lab.git', branch: 'main'
     }
+}
+
 
 
 
