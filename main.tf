@@ -165,7 +165,7 @@ resource "aws_vpc" "env_vpc" {
 resource "aws_subnet" "env_subnet" {
   for_each                = aws_vpc.env_vpc
   vpc_id                  = each.value.id
-  cidr_block              = cidrsubnet(each.value.cidr_block, 8, 0) # first /24 in each VPC
+  cidr_block              = cidrsubnet(each.value.cidr_block, 4, 0) # first /24 in each VPC
   availability_zone       = data.aws_availability_zones.available.names[0]
   map_public_ip_on_launch = true
 
