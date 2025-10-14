@@ -4,6 +4,8 @@ pipeline {
   environment {
     TF_VERSION = '1.6.0'
     TF_WORKSPACE = 'default'
+    AWS_ACCESS_KEY_ID = credentials('Terraform')
+    AWS_SECRET_ACCESS_KEY = credentials('Terraform')
   }
   
 
