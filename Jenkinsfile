@@ -18,7 +18,7 @@ pipeline {
 
       steps {
 
-        git branch: 'main', url: 'https://github.com/<your-username>/aws-terraform-lab.git'
+        git branch: 'main', url: 'https://github.com/nigelhenn/aws-terraform-lab.git'
 
       }
 
