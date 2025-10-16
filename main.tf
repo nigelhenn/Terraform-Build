@@ -50,8 +50,12 @@ data "aws_ami" "amazon_linux" {
   }
 }
 
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+
 resource "aws_security_group" "basic_sg" {
-  name        = "basic-sg"
+  name        = "basic-sg-${random_id.suffix.hex}" # Renamed to avoid conflict
   description = "Allow SSH and HTTP"
   vpc_id      = data.aws_vpc.default.id
 
@@ -103,11 +107,11 @@ EOF
 
 resource "aws_s3_bucket" "lab_bucket" {
   bucket = "terraform-lab-bucket-${random_id.suffix.hex}"
-  acl    = "private"
 }
 
-resource "random_id" "suffix" {
-  byte_length = 4
+resource "aws_s3_bucket_acl" "lab_bucket_acl" {
+  bucket = aws_s3_bucket.lab_bucket.id
+  acl    = "private"
 }
 
 resource "aws_dynamodb_table" "lab_table" {
