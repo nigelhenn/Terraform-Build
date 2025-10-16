@@ -13,7 +13,7 @@ provider "aws" {
 }
 
 variable "aws_region" {
-  description = "AWS region to deploy into"
+  description = "AWS region to deploy to"
   type        = string
   default     = "eu-north-1"
 }
