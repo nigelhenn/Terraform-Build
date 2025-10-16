@@ -109,10 +109,7 @@ resource "aws_s3_bucket" "lab_bucket" {
   bucket = "terraform-lab-bucket-${random_id.suffix.hex}"
 }
 
-resource "aws_s3_bucket_acl" "lab_bucket_acl" {
-  bucket = aws_s3_bucket.lab_bucket.id
-  acl    = "private"
-}
+
 
 resource "aws_dynamodb_table" "lab_table" {
   name         = "terraform-lab-table-${random_id.suffix.hex}"
