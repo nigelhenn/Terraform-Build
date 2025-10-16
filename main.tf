@@ -15,7 +15,7 @@ provider "aws" {
 variable "aws_region" {
   description = "AWS region to deploy into"
   type        = string
-  default     = "eu-west-1"
+  default     = "eu-north-1"
 }
 
 variable "allowed_ssh_cidr" {
